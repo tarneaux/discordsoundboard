@@ -1,116 +1,111 @@
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk
-
-
-import lib
+#! /usr/bin/python3
+from PySide2 import QtCore, QtGui, QtWidgets
+from lib import Client
 import json
 
 
-class Gui(Gtk.Window):
-    def __init__(self) -> None:
-        super().__init__(title="Discord Soundboard")
-        # Set window size
-        self.set_default_size(1620, 700)
+config = json.load(open('config.json'))
 
-        self.audios_scrolled_window = Gtk.ScrolledWindow()
-        # scroll only vertically
-        self.audios_scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.audios_scrolled_window.set_hexpand(True)
-        self.audios_scrolled_window.set_vexpand(True)
-        self.audios_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.audios_box.set_vexpand(False)
-        self.audios_box.set_valign(Gtk.Align.START)
-        self.search_audio(Gtk.Entry())
+host = config['serverAddress'].split(':')[0]
+port = int(config['serverAddress'].split(':')[1])
 
-        search_bar = Gtk.Entry()
-        search_bar.set_placeholder_text("Search")
-        # call search_audio when the user presses enter
-        search_bar.connect("activate", self.search_audio)
+client = Client(host, port)
 
-        # Button with stop icon
-        stop_button = Gtk.Button()
-        stop_button.set_image(Gtk.Image.new_from_icon_name("media-playback-stop-symbolic", Gtk.IconSize.BUTTON))
-        stop_button.set_always_show_image(True)
-        stop_button.connect("clicked", self.stop)
 
-        # Button with pause icon
-        self.pause_button = Gtk.Button()
-        self.pause_button.set_image(Gtk.Image.new_from_icon_name("media-playback-pause-symbolic", Gtk.IconSize.BUTTON))
-        self.pause_button.set_always_show_image(True)
-        self.paused = False
-        self.pause_button.connect("clicked", self.play_pause)
-
-        # Button with refresh icon
-        refresh_button = Gtk.Button()
-        refresh_button.set_image(Gtk.Image.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON))
-        refresh_button.set_always_show_image(True)
-        refresh_button.connect("clicked", self.refresh)
-
-        self.grid = Gtk.Grid()
-        self.grid.attach(self.audios_scrolled_window, 0, 0, 2, 1)
-        self.grid.attach(search_bar, 0, 1, 2, 1)
-        self.grid.attach(stop_button, 0, 2, 1, 1)
-        self.grid.attach(self.pause_button, 1, 2, 1, 1)
-        self.grid.attach(refresh_button, 0, 3, 2, 1)
-        self.add(self.grid)
+class Window(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Hello World")
+        self.audio_scroll_area = QtWidgets.QScrollArea()
+        self.audio_frame = QtWidgets.QFrame()
+        self.audio_scroll_area.setWidget(self.audio_frame)
+        self.audio_scroll_area.setWidgetResizable(True)
+        self.audio_frame.setLayout(QtWidgets.QVBoxLayout())
+        self.audio_frame.layout().setContentsMargins(0, 0, 0, 0)
+        self.audio_frame.layout().setSpacing(0)
+        self.audio_frame.layout().setAlignment(QtCore.Qt.AlignTop)
+        self.setLayout(QtWidgets.QVBoxLayout())
+        self.layout().addWidget(self.audio_scroll_area)
+        self.audio_widget_list = []
+        self.control_frame = QtWidgets.QFrame()
+        self.control_frame.setLayout(QtWidgets.QHBoxLayout())
+        self.control_frame.layout().setContentsMargins(0, 0, 0, 0)
+        self.control_frame.layout().setSpacing(0)
+        self.layout().addWidget(self.control_frame)
+        self.search_box = QtWidgets.QLineEdit()
+        self.search_box.textChanged.connect(self.search)
+        self.control_frame.layout().addWidget(self.search_box)
+        self.stop_button = QtWidgets.QPushButton("Stop")
+        self.stop_button.clicked.connect(client.stop)
+        self.control_frame.layout().addWidget(self.stop_button)
+        self.pause_play_button = QtWidgets.QPushButton("Pause")
+        self.pause_play_button.clicked.connect(self.pause_play)
+        self.control_frame.layout().addWidget(self.pause_play_button)
+        self.refresh_button = QtWidgets.QPushButton("Refresh")
+        self.refresh_button.clicked.connect(self.refresh)
+        self.control_frame.layout().addWidget(self.refresh_button)
+        self.refresh()
     
-    def refresh(self, button):
-        self.search_audio(Gtk.Entry())
+    def refresh(self):
+        self.ls_result = client.ls()
+        self.search()
     
-    def stop(self, button):
-        lib.stop()
-    
-    def play_pause(self, button):
-        if self.paused:
-            lib.resume()
-            self.paused = False
-            button.set_image(Gtk.Image.new_from_icon_name("media-playback-pause-symbolic", Gtk.IconSize.BUTTON))
+    def pause_play(self):
+        if self.pause_play_button.text() == "Pause":
+            self.pause_play_button.setText("Resume")
+            client.pause()
         else:
-            lib.pause()
-            self.paused = True
-            button.set_image(Gtk.Image.new_from_icon_name("media-playback-start-symbolic", Gtk.IconSize.BUTTON))
+            self.pause_play_button.setText("Pause")
+            client.resume()
     
-    def play_audio(self, button, audio_name, vol):
-        lib.stop()
-        self.paused = False
-        self.pause_button.set_image(Gtk.Image.new_from_icon_name("media-playback-pause-symbolic", Gtk.IconSize.BUTTON))
-        lib.vol(vol.get_value()*100)
-        lib.play(audio_name)
+    def stop(self):
+        client.stop()
+        self.pause_play_button.setText("Pause")
     
-    def vol_changed(self, button, value, audio_name):
+    def search(self):
+        volumes = json.load(open('vols.json'))
+        for widget in self.audio_widget_list:
+            self.audio_frame.layout().removeWidget(widget)
+            widget.deleteLater()
+        self.audio_widget_list = []
+        query = self.search_box.text()
+        for i in self.ls_result:
+            if query.lower() in i.lower():
+                vol = volumes[i] if i in volumes else 100
+                self.audio_widget_list.append(AudioWidget(i, vol))
+                self.audio_frame.layout().addWidget(self.audio_widget_list[-1])
+                
+
+class AudioWidget(QtWidgets.QFrame):
+    def __init__(self, audio_name, volume):
+        super().__init__()
+        self.button = QtWidgets.QPushButton(".".join(audio_name.split('.')[:-1]))
+        self.button.clicked.connect(self.play)
+        self.volume = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.volume.setMinimum(0)
+        self.volume.setMaximum(200)
+        self.volume.setValue(volume)
+        self.volume.setFixedWidth(100)
+        self.volume.valueChanged.connect(self.volChange)
+        self.layout = QtWidgets.QHBoxLayout()
+        self.layout.addWidget(self.button)
+        self.layout.addWidget(self.volume)
+        self.setLayout(self.layout)
+        self.audio_name = audio_name
+    
+    def play(self):
+        client.stop()
+        client.vol(self.volume.value())
+        client.play(self.audio_name)
+    
+    def volChange(self):
         vols = json.load(open('vols.json'))
-        if value != 1:
-            vols[audio_name] = value*100
-        else:
-            del vols[audio_name]
-        json.dump(vols, open('vols.json', "w"))
-    
-    def search_audio(self, entry):
-        self.audios_box.foreach(self.audios_box.remove)
-        vols = json.load(open('vols.json'))
-        for element in lib.ls():
-            if entry.get_text().lower() in element.lower():
-                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-                title = ".".join(element.split('.')[:-1])
-                b = Gtk.Button(label=title)
-                box.pack_start(b, True, True, 0)
-                vol = Gtk.VolumeButton()
-                if element in vols.keys():
-                    vol.set_value(vols[element]/100)
-                else:
-                    vol.set_value(1)
-                box.pack_start(vol, False, True, 0)
-                self.audios_box.pack_end(box, True, True, 0)
-                b.connect("clicked", self.play_audio, element, vol)
-                vol.connect("value-changed", self.vol_changed, element)
-        self.audios_scrolled_window.foreach(self.audios_scrolled_window.remove)
-        self.audios_scrolled_window.add(self.audios_box)
-        self.show_all()
+        vols[self.audio_name] = self.volume.value()
+        json.dump(vols, open('vols.json', 'w'))
 
 
 
-win = Gui()
-win.connect("destroy", Gtk.main_quit)
-win.show_all()
-Gtk.main()
+app = QtWidgets.QApplication([])
+window = Window()
+window.showMaximized()
+app.exec_()
